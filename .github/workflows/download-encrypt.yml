@@ -9,7 +9,7 @@ on:
         default: ''
         type: string
       url_list:
-        description: 'لیست لینک‌ها (هر خط یک لینک) - اگر هم لینک تکی و هم لیست پر شوند، فقط لیست پردازش می‌شود.'
+        description: 'لیست لینک‌ها با کاما (,) جدا کنید. مثال: https://a.m3u8,https://b.m3u8'
         required: false
         default: ''
         type: string
@@ -44,11 +44,9 @@ jobs:
       - name: Prepare URL list
         id: prepare
         run: |
-          # اگر لیست پر شده باشد، لینک‌ها را از آن می‌خوانیم.
-          # در غیر این صورت از لینک تکی استفاده می‌کنیم.
+          # اگر لیست با کاما پر شده باشد، آن را به خطوط تبدیل می‌کنیم
           if [ -n "${{ github.event.inputs.url_list }}" ]; then
-            # ذخیره لیست در یک فایل موقت برای پردازش راحت‌تر
-            echo "${{ github.event.inputs.url_list }}" > urls.txt
+            echo "${{ github.event.inputs.url_list }}" | tr ',' '\n' > urls.txt
           elif [ -n "${{ github.event.inputs.m3u8_url }}" ]; then
             echo "${{ github.event.inputs.m3u8_url }}" > urls.txt
           else
@@ -64,18 +62,16 @@ jobs:
 
           index=1
           while IFS= read -r url || [ -n "$url" ]; do
-            # نادیده گرفتن خطوط خالی
+            # نادیده گرفتن خطوط خالی (مثلاً اگر کاربر دو کاما پشت هم بزند)
             [ -z "$url" ] && continue
 
             echo "====================================="
             echo "پردازش لینک شماره $index: $url"
             echo "====================================="
 
-            # نام پوشه و فایل خروجی
             FOLDER_NAME="${PREFIX}_${index}"
             mkdir -p "$FOLDER_NAME"
 
-            # نام فایل MP4 موقت (قرار است بعداً حذف شود)
             TEMP_MP4="temp_${index}.mp4"
 
             # دانلود با ffmpeg
@@ -85,14 +81,11 @@ jobs:
                    -bsf:a aac_adtstoasc \
                    "$TEMP_MP4"
 
-            # رمزنگاری و پارت‌بندی داخل پوشه مخصوص
-            # ابتدا وارد پوشه می‌شویم و آرشیو را در همان پوشه می‌سازیم
+            # انتقال فایل به پوشه و ساخت آرشیو رمزدار پارت‌بندی‌شده
             mv "$TEMP_MP4" "$FOLDER_NAME/"
             cd "$FOLDER_NAME"
             zip -P "$PASS" -s ${SIZE_MB}m -r "${FOLDER_NAME}.zip" "$TEMP_MP4"
-            # حذف فایل MP4 اصلی
             rm "$TEMP_MP4"
-            # بازگشت به ریشه مخزن
             cd ..
 
             echo "پوشه $FOLDER_NAME با موفقیت ساخته شد."
@@ -103,5 +96,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: '📁 Add encrypted video parts (multiple)'
-          # الگویی که تمام پوشه‌های ساخته شده را پوشش دهد
           file_pattern: '${{ github.event.inputs.archive_name }}_*'
