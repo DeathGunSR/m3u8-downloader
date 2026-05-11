@@ -1,23 +1,24 @@
-name: Download & Encrypt M3U8 (Parts + Password)
+name: Download & Encrypt Multiple M3U8 (Parts + Password)
 
 on:
   workflow_dispatch:
     inputs:
       m3u8_url:
-        description: 'لینک فایل m3u8'
-        required: true
-        type: string
-      output_mp4:
-        description: 'نام فایل MP4 موقت (مثلاً video.mp4)'
+        description: 'لینک تکی (در صورت نیاز)'
         required: false
-        default: 'video.mp4'
+        default: ''
+        type: string
+      url_list:
+        description: 'لیست لینک‌ها (هر خط یک لینک) - اگر هم لینک تکی و هم لیست پر شوند، فقط لیست پردازش می‌شود.'
+        required: false
+        default: ''
         type: string
       archive_name:
-        description: 'پیشوند نام فایل‌های ZIP (مثلاً myvid)'
+        description: 'پیشوند نام پوشه‌ها و فایل‌ها (مثلاً myvid)'
         required: true
         type: string
       password:
-        description: 'رمز فایل ZIP (روی فایل‌ها تنظیم می‌شود)'
+        description: 'رمز مشترک فایل ZIP'
         required: true
         type: string
       part_size_mb:
@@ -40,27 +41,67 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y ffmpeg zip
 
-      - name: Download video using ffmpeg
+      - name: Prepare URL list
+        id: prepare
         run: |
-          ffmpeg -protocol_whitelist file,http,https,tcp,tls,crypto \
-                 -i "${{ github.event.inputs.m3u8_url }}" \
-                 -c copy \
-                 -bsf:a aac_adtstoasc \
-                 "${{ github.event.inputs.output_mp4 }}"
+          # اگر لیست پر شده باشد، لینک‌ها را از آن می‌خوانیم.
+          # در غیر این صورت از لینک تکی استفاده می‌کنیم.
+          if [ -n "${{ github.event.inputs.url_list }}" ]; then
+            # ذخیره لیست در یک فایل موقت برای پردازش راحت‌تر
+            echo "${{ github.event.inputs.url_list }}" > urls.txt
+          elif [ -n "${{ github.event.inputs.m3u8_url }}" ]; then
+            echo "${{ github.event.inputs.m3u8_url }}" > urls.txt
+          else
+            echo "هیچ لینکی ارائه نشده است!" >&2
+            exit 1
+          fi
 
-      - name: Create password-protected split ZIP archive
+      - name: Download and encrypt each video
         run: |
-          ZIP_PREFIX="${{ github.event.inputs.archive_name }}"
+          PREFIX="${{ github.event.inputs.archive_name }}"
           SIZE_MB="${{ github.event.inputs.part_size_mb }}"
-          zip -P "${{ github.event.inputs.password }}" \
-              -s ${SIZE_MB}m \
-              -r "${ZIP_PREFIX}.zip" \
-              "${{ github.event.inputs.output_mp4 }}"
-          # حذف فایل بزرگ MP4 برای جلوگیری از کامیت شدن
-          rm "${{ github.event.inputs.output_mp4 }}"
+          PASS="${{ github.event.inputs.password }}"
 
-      - name: Commit ZIP parts to repository
+          index=1
+          while IFS= read -r url || [ -n "$url" ]; do
+            # نادیده گرفتن خطوط خالی
+            [ -z "$url" ] && continue
+
+            echo "====================================="
+            echo "پردازش لینک شماره $index: $url"
+            echo "====================================="
+
+            # نام پوشه و فایل خروجی
+            FOLDER_NAME="${PREFIX}_${index}"
+            mkdir -p "$FOLDER_NAME"
+
+            # نام فایل MP4 موقت (قرار است بعداً حذف شود)
+            TEMP_MP4="temp_${index}.mp4"
+
+            # دانلود با ffmpeg
+            ffmpeg -protocol_whitelist file,http,https,tcp,tls,crypto \
+                   -i "$url" \
+                   -c copy \
+                   -bsf:a aac_adtstoasc \
+                   "$TEMP_MP4"
+
+            # رمزنگاری و پارت‌بندی داخل پوشه مخصوص
+            # ابتدا وارد پوشه می‌شویم و آرشیو را در همان پوشه می‌سازیم
+            mv "$TEMP_MP4" "$FOLDER_NAME/"
+            cd "$FOLDER_NAME"
+            zip -P "$PASS" -s ${SIZE_MB}m -r "${FOLDER_NAME}.zip" "$TEMP_MP4"
+            # حذف فایل MP4 اصلی
+            rm "$TEMP_MP4"
+            # بازگشت به ریشه مخزن
+            cd ..
+
+            echo "پوشه $FOLDER_NAME با موفقیت ساخته شد."
+            index=$((index + 1))
+          done < urls.txt
+
+      - name: Commit all folders to repository
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: '🔐 Add encrypted video parts'
-          file_pattern: '${{ github.event.inputs.archive_name }}.*'
+          commit_message: '📁 Add encrypted video parts (multiple)'
+          # الگویی که تمام پوشه‌های ساخته شده را پوشش دهد
+          file_pattern: '${{ github.event.inputs.archive_name }}_*'
