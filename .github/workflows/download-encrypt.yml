@@ -33,7 +33,12 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Install dependencies (ffmpeg & zip)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg zip
 
       - name: Download video using ffmpeg
         run: |
@@ -51,11 +56,11 @@ jobs:
               -s ${SIZE_MB}m \
               -r "${ZIP_PREFIX}.zip" \
               "${{ github.event.inputs.output_mp4 }}"
-          # Remove the original large MP4 to avoid committing it
+          # حذف فایل بزرگ MP4 برای جلوگیری از کامیت شدن
           rm "${{ github.event.inputs.output_mp4 }}"
 
       - name: Commit ZIP parts to repository
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: '🔐 Add encrypted video parts'
           file_pattern: '${{ github.event.inputs.archive_name }}.*'
