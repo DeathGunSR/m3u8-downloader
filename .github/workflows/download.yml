@@ -1,0 +1,61 @@
+name: Download & Encrypt M3U8 (Parts + Password)
+
+on:
+  workflow_dispatch:
+    inputs:
+      m3u8_url:
+        description: 'لینک فایل m3u8'
+        required: true
+        type: string
+      output_mp4:
+        description: 'نام فایل MP4 موقت (مثلاً video.mp4)'
+        required: false
+        default: 'video.mp4'
+        type: string
+      archive_name:
+        description: 'پیشوند نام فایل‌های ZIP (مثلاً myvid)'
+        required: true
+        type: string
+      password:
+        description: 'رمز فایل ZIP (روی فایل‌ها تنظیم می‌شود)'
+        required: true
+        type: string
+      part_size_mb:
+        description: 'حجم هر پارت (مگابایت) - پیش‌فرض 45'
+        required: false
+        default: '45'
+        type: string
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download video using ffmpeg
+        run: |
+          ffmpeg -protocol_whitelist file,http,https,tcp,tls,crypto \
+                 -i "${{ github.event.inputs.m3u8_url }}" \
+                 -c copy \
+                 -bsf:a aac_adtstoasc \
+                 "${{ github.event.inputs.output_mp4 }}"
+
+      - name: Create password-protected split ZIP archive
+        run: |
+          ZIP_PREFIX="${{ github.event.inputs.archive_name }}"
+          SIZE_MB="${{ github.event.inputs.part_size_mb }}"
+          zip -P "${{ github.event.inputs.password }}" \
+              -s ${SIZE_MB}m \
+              -r "${ZIP_PREFIX}.zip" \
+              "${{ github.event.inputs.output_mp4 }}"
+          # Remove the original large MP4 to avoid committing it
+          rm "${{ github.event.inputs.output_mp4 }}"
+
+      - name: Commit ZIP parts to repository
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '🔐 Add encrypted video parts'
+          file_pattern: '${{ github.event.inputs.archive_name }}.*'
